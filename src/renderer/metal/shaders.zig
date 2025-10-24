@@ -43,6 +43,11 @@ const pipeline_descs: []const struct { [:0]const u8, PipelineDescription } =
             .step_fn = .per_instance,
             .blending_enabled = true,
         } },
+        .{ "texture_copy", .{
+            .vertex_fn = "full_screen_vertex",
+            .fragment_fn = "texture_copy_fragment",
+            .blending_enabled = false,
+        } },
     };
 
 /// All the comptime-known info about a pipeline, so that

@@ -435,6 +435,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             front_texture: Texture,
             back_texture: Texture,
 
+            /// Texture that holds the previous frame's output, allowing
+            /// temporal effects and feedback loops in custom shaders.
+            previous_frame_texture: Texture,
+
             /// Shadertoy uses a sampler for accessing the various channel
             /// textures. In Metal, we need to explicitly create these since
             /// the glslang-to-msl compiler doesn't do it for us (as we
@@ -478,6 +482,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     null,
                 );
                 errdefer back_texture.deinit();
+                const previous_frame_texture = try Texture.init(
+                    api.textureOptions(),
+                    1,
+                    1,
+                    null,
+                );
+                errdefer previous_frame_texture.deinit();
 
                 const sampler = try Sampler.init(api.samplerOptions());
                 errdefer sampler.deinit();
@@ -485,6 +496,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 return .{
                     .front_texture = front_texture,
                     .back_texture = back_texture,
+                    .previous_frame_texture = previous_frame_texture,
                     .sampler = sampler,
                     .uniforms = uniforms,
                 };
@@ -493,6 +505,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             pub fn deinit(self: *CustomShaderState) void {
                 self.front_texture.deinit();
                 self.back_texture.deinit();
+                self.previous_frame_texture.deinit();
                 self.sampler.deinit();
                 self.uniforms.deinit();
             }
@@ -517,12 +530,21 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     null,
                 );
                 errdefer back_texture.deinit();
+                const previous_frame_texture = try Texture.init(
+                    api.textureOptions(),
+                    @intCast(width),
+                    @intCast(height),
+                    null,
+                );
+                errdefer previous_frame_texture.deinit();
 
                 self.front_texture.deinit();
                 self.back_texture.deinit();
+                self.previous_frame_texture.deinit();
 
                 self.front_texture = front_texture;
                 self.back_texture = back_texture;
+                self.previous_frame_texture = previous_frame_texture;
             }
         };
 
@@ -1556,10 +1578,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     defer state.swap();
 
                     var pass = frame_ctx.renderPass(&.{.{
-                        .target = if (i < self.shaders.post_pipelines.len - 1)
-                            .{ .texture = state.front_texture }
-                        else
-                            .{ .target = frame.target },
+                        .target = .{ .texture = state.front_texture },
                         .clear_color = .{ 0.0, 0.0, 0.0, 0.0 },
                     }});
                     defer pass.complete();
@@ -1567,6 +1586,53 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     pass.step(.{
                         .pipeline = pipeline,
                         .uniforms = state.uniforms.buffer,
+                        .textures = &.{ state.back_texture, state.previous_frame_texture },
+                        .samplers = &.{ state.sampler, state.sampler },
+                        .draw = .{
+                            .type = .triangle,
+                            .vertex_count = 3,
+                        },
+                    });
+
+                    _ = i; // unused
+                }
+
+                // After all custom shaders complete (and all swaps), back_texture
+                // contains the final output. We need to:
+                // 1. Copy it to previous_frame_texture for next frame
+                // 2. Render it to frame.target for display
+
+                // Copy final output to previous_frame_texture for next frame
+                {
+                    var pass = frame_ctx.renderPass(&.{.{
+                        .target = .{ .texture = state.previous_frame_texture },
+                        .clear_color = .{ 0.0, 0.0, 0.0, 0.0 },
+                    }});
+                    defer pass.complete();
+
+                    pass.step(.{
+                        .pipeline = self.shaders.pipelines.texture_copy,
+                        .uniforms = self.shader_uniforms.buffer,
+                        .textures = &.{state.back_texture},
+                        .samplers = &.{state.sampler},
+                        .draw = .{
+                            .type = .triangle,
+                            .vertex_count = 3,
+                        },
+                    });
+                }
+
+                // Render final output to the display target
+                {
+                    var pass = frame_ctx.renderPass(&.{.{
+                        .target = .{ .target = frame.target },
+                        .clear_color = .{ 0.0, 0.0, 0.0, 0.0 },
+                    }});
+                    defer pass.complete();
+
+                    pass.step(.{
+                        .pipeline = self.shaders.pipelines.texture_copy,
+                        .uniforms = self.shader_uniforms.buffer,
                         .textures = &.{state.back_texture},
                         .samplers = &.{state.sampler},
                         .draw = .{

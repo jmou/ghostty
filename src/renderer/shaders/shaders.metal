@@ -851,3 +851,19 @@ fragment float4 image_fragment(
   return rgba;
 }
 
+//-------------------------------------------------------------------
+// Texture Copy Shader
+//-------------------------------------------------------------------
+#pragma mark - Texture Copy Shader
+
+fragment float4 texture_copy_fragment(
+  FullScreenVertexOut in [[stage_in]],
+  constant Uniforms& uniforms [[buffer(1)]],
+  texture2d<float> source_texture [[texture(0)]],
+  sampler textureSampler [[sampler(0)]]
+) {
+  // Compute UV coordinates from fragment position
+  float2 uv = in.position.xy / uniforms.screen_size;
+  return source_texture.sample(textureSampler, uv);
+}
+

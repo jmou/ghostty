@@ -439,6 +439,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             /// temporal effects and feedback loops in custom shaders.
             previous_frame_texture: Texture,
 
+            /// Flag to track if previous_frame_texture needs initialization.
+            /// Set to true when the texture is created or resized, and cleared
+            /// after the first initialization pass.
+            previous_frame_needs_init: bool,
+
             /// Shadertoy uses a sampler for accessing the various channel
             /// textures. In Metal, we need to explicitly create these since
             /// the glslang-to-msl compiler doesn't do it for us (as we
@@ -497,6 +502,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .front_texture = front_texture,
                     .back_texture = back_texture,
                     .previous_frame_texture = previous_frame_texture,
+                    .previous_frame_needs_init = true,
                     .sampler = sampler,
                     .uniforms = uniforms,
                 };
@@ -545,6 +551,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.front_texture = front_texture;
                 self.back_texture = back_texture;
                 self.previous_frame_texture = previous_frame_texture;
+                self.previous_frame_needs_init = true;
             }
         };
 
@@ -1574,6 +1581,16 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // Sync our uniforms.
                 try state.uniforms.sync(&.{self.custom_shader_uniforms});
 
+                // Initialize previous_frame_texture if needed (first frame or after resize)
+                if (state.previous_frame_needs_init) {
+                    var pass = frame_ctx.renderPass(&.{.{
+                        .target = .{ .texture = state.previous_frame_texture },
+                        .clear_color = .{ 0.0, 0.0, 0.0, 0.0 },
+                    }});
+                    defer pass.complete();
+                    state.previous_frame_needs_init = false;
+                }
+
                 for (self.shaders.post_pipelines, 0..) |pipeline, i| {
                     defer state.swap();
 
@@ -1612,7 +1629,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                     pass.step(.{
                         .pipeline = self.shaders.pipelines.texture_copy,
-                        .uniforms = self.shader_uniforms.buffer,
+                        .uniforms = frame.uniforms.buffer,
                         .textures = &.{state.back_texture},
                         .samplers = &.{state.sampler},
                         .draw = .{
@@ -1632,7 +1649,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                     pass.step(.{
                         .pipeline = self.shaders.pipelines.texture_copy,
-                        .uniforms = self.shader_uniforms.buffer,
+                        .uniforms = frame.uniforms.buffer,
                         .textures = &.{state.back_texture},
                         .samplers = &.{state.sampler},
                         .draw = .{

@@ -1,5 +1,3 @@
-#version 430 core
-
 #include "common.glsl"
 
 layout(binding = 0) uniform sampler2D source_texture;
